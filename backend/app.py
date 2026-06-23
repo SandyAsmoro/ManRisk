@@ -35,7 +35,7 @@ def create_app():
     
     app.config['JSON_AS_ASCII'] = False
     app.config['JSON_SORT_KEYS'] = False
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'manrisk-fallback-secret-key-kppn-2026')
+    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'fallback-secret-key')
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
@@ -123,6 +123,6 @@ def create_app():
     logger.info("Aplikasi terhubung dan seluruh rute berhasil diamankan.")
     return app
 
+app = create_app()
 if __name__ == '__main__':
-    app = create_app()
     app.run(host='0.0.0.0', port=5000, debug=True)
