@@ -50,9 +50,19 @@ def create_app():
 
     # PERBAIKAN CORS FINAL: Bersihkan string origin, lalu daftarkan ke flask-cors
     # Ambil nilai dari env. Jika kosong, gunakan default Netlify
-    raw_origins = os.getenv('CORS_ORIGINS', 'https://manriskmski.netlify.app')
-    allowed_origins = [origin.strip().rstrip('/') for origin in raw_origins.split(',')]
-    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
+    allowed_origins = [
+        "https://ubiquitous-melomakarona-51e5fa.netlify.app",
+        "https://manriskmski.netlify.app" # Tambahkan domain lain jika ada
+    ]
+    
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": allowed_origins,
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True
+        }
+    })
 
     @jwt.token_in_blocklist_loader
     def check_if_token_in_blacklist(jwt_header, jwt_payload):
