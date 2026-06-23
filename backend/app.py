@@ -50,19 +50,20 @@ def create_app():
 
     # PERBAIKAN CORS FINAL: Bersihkan string origin, lalu daftarkan ke flask-cors
     # Ambil nilai dari env. Jika kosong, gunakan default Netlify
-    allowed_origins = [
-        "https://ubiquitous-melomakarona-51e5fa.netlify.app",
-        "https://manriskmski.netlify.app" # Tambahkan domain lain jika ada
-    ]
+    # allowed_origins = [
+    #     "https://ubiquitous-melomakarona-51e5fa.netlify.app",
+    #     "https://manriskmski.netlify.app" # Tambahkan domain lain jika ada
+    # ]
     
-    CORS(app, resources={
-        r"/api/*": {
-            "origins": allowed_origins,
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"],
-            "supports_credentials": True
-        }
-    })
+    # CORS(app, resources={
+    #     r"/api/*": {
+    #         "origins": allowed_origins,
+    #         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    #         "allow_headers": ["Content-Type", "Authorization"],
+    #         "supports_credentials": True
+    #     }
+    # })
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
 
     @jwt.token_in_blocklist_loader
     def check_if_token_in_blacklist(jwt_header, jwt_payload):
@@ -94,6 +95,11 @@ def create_app():
                 "message": "Koneksi database terputus"
             }), 503
 
+    @app.before_request
+    def handle_preflight():
+        if request.method == "OPTIONS":
+            return '', 200
+        
     @app.before_request
     def check_password_change_requirement():
         excluded_endpoints = ['/api/auth/login', '/api/auth/logout', '/api/auth/change-password']
