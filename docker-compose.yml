@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: risiko_db
+    environment:
+      POSTGRES_DB: risiko_kppn
+      POSTGRES_USER: risiko_user
+      POSTGRES_PASSWORD: risiko_secure_2024
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./database/initial_data.sql:/docker-entrypoint-initdb.d/02-initial_data.sql
+    networks:
+      - risiko_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: risiko_backend
+    environment:
+      DATABASE_URL: postgresql://risiko_user:risiko_secure_2024@db:5432/risiko_kppn
+      FLASK_ENV: development
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+    depends_on:
+      - db
+    networks:
+      - risiko_network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  risiko_network:
+    driver: bridge
