@@ -25,7 +25,7 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
-            <tr v-for="u in users" :key="u.id" class="transition hover:bg-gray-50">
+            <tr v-for="u in filteredUsers" :key="u.id" class="transition hover:bg-gray-50">
               <td class="p-4">
                 <p class="font-bold text-gray-800">{{ u.full_name || '-' }}</p>
                 <p class="text-xs text-gray-500">@{{ u.username }}</p>
@@ -66,7 +66,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import api from '@/utils/api';
 
 const users = ref([]);
@@ -74,6 +74,11 @@ const users = ref([]);
 const showModal = ref(false);
 const selectedUser = ref(null);
 const temporaryPassword = ref('');
+
+const filteredUsers = computed(() => {
+  // Hanya mengembalikan user yang rolenya BUKAN admin
+  return users.value.filter(user => user.role !== 'admin');
+});
 
 const fetchUsers = async () => {
   try {
