@@ -6,7 +6,7 @@
 
       <!-- Header -->
       <div class="mb-8 text-center">
-        <h1 class="text-2xl font-bold text-gray-800">ManRisk KPPN</h1>
+        <h1 class="text-2xl font-bold text-gray-800">ManRisk KPPN Malang</h1>
         <p class="mt-1 text-sm text-gray-500">Sistem Manajemen Risiko Operasional</p>
       </div>
 
@@ -119,7 +119,7 @@
       </form>
 
       <p class="mt-6 text-xs text-center text-gray-400">
-        Khusus pengguna internal KPPN &bull; &copy; {{ new Date().getFullYear() }}
+        Khusus pengguna internal KPPN Malang &bull; &copy; {{ new Date().getFullYear() }}
       </p>
     </div>
   </div>

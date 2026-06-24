@@ -47,7 +47,7 @@
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700">Tindakan Mitigasi (Opsional)</label>
+            <label class="block text-sm font-medium text-gray-700">Tindakan Mitigasi</label>
             <input type="text" v-model="form.mitigation_action" :disabled="isReadOnly" class="w-full p-2 mt-1 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100" placeholder="Langkah mitigasi..." />
           </div>
         </div>

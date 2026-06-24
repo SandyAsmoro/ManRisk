@@ -14,6 +14,7 @@ import ChangePasswordPage from '@/views/ChangePasswordPage.vue';
 import AnalisisPerubahan from '@/views/AnalisisPerubahan.vue';
 import RiwayatDataPage from '@/views/RiwayatDataPage.vue';
 import AuditLogPage from '@/views/AuditLogPage.vue';
+import UbahPasswordPage from '@/views/UbahPasswordPage.vue';
 
 const routes = [
   { 
@@ -86,7 +87,13 @@ const routes = [
     name: 'AdminIndicators', // Harus sama dengan key di titleMap Navbar.vue
     component: () => import('@/views/AdminIndicator.vue'), // Sesuaikan lokasi filenya
     meta: { requiresAuth: true, role: 'admin' } // Jika Anda memakai navigation guard untuk admin
-  }
+  },
+  { 
+    path: '/ubah-password', 
+    name: 'UbahPassword', 
+    component: UbahPasswordPage, 
+    meta: { requiresAuth: true, requiresAdmin: true } // 👈 Kunci keamanan ada di sini
+  },
 ];
 
 const router = createRouter({

@@ -27,6 +27,10 @@
       
       <hr class="my-4 border-secondary" />
 
+      <router-link v-if="authStore.user?.role === 'admin'" to="/ubah-password" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
+        Ubah Password Admin
+      </router-link>
+      
       <router-link v-if="authStore.user?.role === 'admin'" to="/admin/indicators" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
         Kelola Indikator & Target
       </router-link>
