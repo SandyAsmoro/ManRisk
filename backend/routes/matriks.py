@@ -4,10 +4,32 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 from sqlalchemy import func
-from models import RiskAssessment, User, RiskIndicator
+from models import RiskAssessment, User, RiskIndicator, RiskMatrixMapping # Pastikan Model ini ada
 
 matriks_bp = Blueprint('matriks', __name__)
 
+# ENDPOINT BARU: Digunakan oleh MatrixVisual.vue untuk menggambar Matriks
+@matriks_bp.route('/mapping', methods=['GET'])
+@jwt_required()
+def get_matrix_mapping():
+    mappings = db.session.query(RiskMatrixMapping).all()
+    
+    data = []
+    for m in mappings:
+        data.append({
+            "id": m.id,
+            "risk_value": m.risk_value,
+            "frequency": m.frequency,
+            "impact": m.impact,
+            "category": m.category,
+            "color_code": m.color_code,
+            "description": m.description,
+            "mitigation_level": m.mitigation_level
+        })
+        
+    return jsonify({"status": "success", "data": data})
+
+# ENDPOINT LAMA YANG DIPERBARUI: Dibuat dinamis membaca tabel RiskMatrixMapping
 @matriks_bp.route('/summary/<quarter>', methods=['GET'])
 @jwt_required()
 def get_matriks_summary(quarter):
@@ -30,18 +52,17 @@ def get_matriks_summary(quarter):
         
     results = query.group_by(RiskAssessment.risk_category).all()
     
-    # Mapping standar Kemenkeu (Nilai awal 0)
-    summary = { "Biru": 0, "Hijau": 0, "Kuning": 0, "Jingga": 0, "Merah": 0 }
+    # Dapatkan semua kategori unik langsung dari database (Tabel Mapping)
+    distinct_categories = db.session.query(RiskMatrixMapping.category).distinct().all()
+    summary = { cat[0]: 0 for cat in distinct_categories }
     
-    # Memasukkan hasil query ke mapping yang sesuai
+    # Memasukkan hasil query ke mapping yang sesuai secara eksak
+    # (Hanya asumsikan nilai RiskAssessment.risk_category sinkron dengan nama kolom di RiskMatrixMapping)
     for kategori, count in results:
-        # Pengecekan aman jaga-jaga kalau ada nama kategori anomali (misal "Risiko Tinggi" bukan warnanya)
-        if "Biru" in str(kategori) or "Rendah" in str(kategori) and "Sedang" not in str(kategori): summary["Biru"] += count
-        elif "Hijau" in str(kategori) or "Sedang Rendah" in str(kategori): summary["Hijau"] += count
-        elif "Kuning" in str(kategori) or "Sedang" in str(kategori): summary["Kuning"] += count
-        elif "Jingga" in str(kategori) or "Tinggi" in str(kategori) and "Sangat" not in str(kategori): summary["Jingga"] += count
-        elif "Merah" in str(kategori) or "Sangat Tinggi" in str(kategori): summary["Merah"] += count
-        # Default map (fallback)
-        elif kategori in summary: summary[kategori] = count
+        if kategori in summary:
+            summary[kategori] = count
+        else:
+            # Jika ada sisa data historis lama (fallback)
+            summary[kategori] = count
 
     return jsonify({"status": "success", "data": summary})

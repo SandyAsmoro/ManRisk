@@ -4,7 +4,7 @@ import logging
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
-from models import RiskAssessment, User
+from models import RiskAssessment, User, RiskMatrixMapping
 
 logger = logging.getLogger(__name__)
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -40,21 +40,19 @@ def get_summary():
             
     assessments = query.all()
     
-    # KUNCI HARUS SESUAI DENGAN ISI DATABASE (TABEL RiskMatrixMapping)
-    summary = {
-        'Biru': 0,
-        'Hijau': 0,
-        'Kuning': 0,
-        'Jingga': 0,
-        'Merah': 0
-    }
-    
+    # 🚨 PERBAIKAN: kategori sebelumnya hardcode ('Biru','Hijau','Kuning','Jingga','Merah')
+    # padahal nama kategori asli di tabel risk_matrix_mapping sudah jadi 'Hijau Tua' &
+    # 'Oranye'. Hitungan tetap akurat berkat fallback else di bawah, tapi key 'Hijau' &
+    # 'Jingga' jadi key hantu yang tak pernah terisi & tidak konsisten dengan
+    # get_matriks_summary() di routes/matriks.py. Sekarang kategori diambil langsung
+    # dari DB supaya kedua endpoint summary selalu sinkron & ikut menyesuaikan kalau
+    # kategori di database diubah lagi di kemudian hari.
+    distinct_categories = db.session.query(RiskMatrixMapping.category).distinct().all()
+    summary = {cat[0]: 0 for cat in distinct_categories}
+
     for a in assessments:
         cat = a.risk_category
-        if cat in summary:
-            summary[cat] += 1
-        else:
-            summary[cat] = summary.get(cat, 0) + 1
+        summary[cat] = summary.get(cat, 0) + 1
             
     return jsonify({
         "status": "success",

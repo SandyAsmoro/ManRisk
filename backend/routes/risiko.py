@@ -13,6 +13,7 @@ from datetime import datetime
 from utils.decorators import check_section_access
 from config import is_editable
 from werkzeug.utils import secure_filename
+from sqlalchemy import asc, case
 
 logger = logging.getLogger(__name__)
 risiko_bp = Blueprint('risiko', __name__)
@@ -34,7 +35,6 @@ def get_previous_quarter(current_quarter, current_year):
 # ==========================================
 # 🚨 FUNGSI BARU: VALIDASI QUARTER-BASED LOCKING
 # ==========================================
-
 
 def check_quarter_lock(quarter, user_role):
     """
@@ -65,11 +65,23 @@ def check_quarter_lock(quarter, user_role):
 # ENDPOINT GET INDIKATOR
 # ==========================================
 
-
 @risiko_bp.route('/indicators', methods=['GET'])
 @jwt_required()
 def get_indicators():
-    indicators = RiskIndicator.query.filter_by(is_active=True).all()
+    # indicators = RiskIndicator.query.filter_by(is_active=True).all()
+    # SESUDAH DIUBAH:
+    # 1. Atur bobot prioritas baru (Bobot terkecil akan muncul paling atas)
+    sort_priority = case(
+        (RiskIndicator.indicator_code.startswith('NON-IKU'), 2),     # Prioritas 2 (Tengah)
+        (RiskIndicator.indicator_code.startswith('MANDATORY'), 3),   # Prioritas 3 (Bawah)
+        else_=1                                                     # Prioritas 1 (Teratas: Indikator lainnya)
+    )
+
+    # 2. Tarik data dari database dengan filter aktif dan urutan ganda
+    indicators = RiskIndicator.query.filter_by(is_active=True).order_by(
+        sort_priority,                      # 1. Urutkan berdasarkan urutan kelompok prioritas baru
+        RiskIndicator.indicator_code.asc()  # 2. Urutkan A-Z secara alfabetis di dalam masing-masing kelompok
+    ).all()
     return jsonify({
         "status": "success",
         "data": [{
@@ -88,7 +100,6 @@ def get_indicators():
 # ==========================================
 # ENDPOINT GET RIWAYAT ASESMEN
 # ==========================================
-
 
 @risiko_bp.route('/assessments', methods=['GET'])
 @jwt_required()
@@ -145,7 +156,6 @@ def get_assessments():
 # ==========================================
 # ENDPOINT CREATE (INPUT DATA BARU)
 # ==========================================
-
 
 @risiko_bp.route('/assessment', methods=['POST'])
 @jwt_required()
@@ -397,8 +407,53 @@ def update_assessment(assessment_id):
         return jsonify({'status': 'error', 'message': f'Terjadi kesalahan internal: {str(e)}'}), 500
 
 # ==========================================
+# ENDPOINT DELETE (HAPUS KESELURUHAN DATA ASESMEN)
+# ==========================================
+@risiko_bp.route('/assessments/<assessment_id>', methods=['DELETE'])
+@jwt_required()
+def delete_assessment(assessment_id):
+    user_id = get_jwt_identity()
+    user = db.session.get(User, user_id)
+
+    # 1. Cek Hak Akses (Pastikan hanya pemilik atau admin yang bisa menghapus)
+    has_access, assessment_or_error, status_code = check_section_access(assessment_id, user_id)
+    if not has_access:
+        return jsonify(assessment_or_error), status_code
+
+    assessment = assessment_or_error
+
+    # 2. Validasi Kunci Periode & Status Verifikasi
+    is_unlocked, msg = check_quarter_lock(assessment.quarter, user.role)
+    if not is_unlocked and user.role != 'admin':
+        return jsonify({'status': 'error', 'message': msg}), 403
+
+    if assessment.status == 'verified' and user.role != 'admin':
+        return jsonify({'status': 'error', 'message': 'Data ini telah disetujui (Verified) dan tidak dapat dihapus.'}), 403
+
+    try:
+        # 3. Cari dan Hapus Dokumen Fisik di Supabase (Jika Ada)
+        doc = SupportingDocument.query.filter_by(assessment_id=assessment_id).first()
+        if doc and supabase_client:
+            try:
+                supabase_client.storage.from_('bukti_pendukung').remove([doc.stored_filename])
+            except Exception as e:
+                logger.error(f"Gagal menghapus file dari Supabase Storage: {str(e)}")
+
+        # 4. Hapus Asesmen dari Database
+        # (Catatan: Baris tabel SupportingDocument akan ikut terhapus otomatis karena cascade='all, delete-orphan' di models.py)
+        db.session.delete(assessment)
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': 'Data asesmen berhasil dihapus.'})
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error hapus asesmen: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Terjadi kesalahan internal saat menghapus data.'}), 500
+
+# ==========================================
 # ENDPOINT DOWNLOAD DOKUMEN BUKTI PENDUKUNG
 # ==========================================
+
 @risiko_bp.route('/assessments/<assessment_id>/document', methods=['GET'])
 @jwt_required()
 def download_document(assessment_id):

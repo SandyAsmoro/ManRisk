@@ -1,12 +1,10 @@
-<!-- ...\ManRiskMSKI\frontend\src\components\MatrixVisual.vue -->
-
 <template>
   <div class="w-full p-6 mx-auto font-sans bg-white">
     
     <div class="flex flex-col items-start justify-between gap-3 pb-4 mb-6 border-b sm:flex-row sm:items-center border-gray-50">
       <div>
-        <h3 class="text-xl font-bold text-gray-800">Peta Matriks Heatmap Risiko Kemenkeu</h3>
-        <p class="text-xs text-gray-500 mt-0.5">Visualisasi hubungan tingkat Frekuensi (Sumbu Y) dan Dampak (Sumbu X).</p>
+        <h3 class="text-xl font-bold text-gray-800">Peta Matriks Heatmap Risiko</h3>
+        <p class="text-xs text-gray-500 mt-0.5">Visualisasi dinamis berdasarkan data pemetaan sistem.</p>
       </div>
       <button 
         @click="toggleHighContrast" 
@@ -18,7 +16,11 @@
       </button>
     </div>
 
-    <div class="flex flex-col items-center justify-center w-full gap-10 lg:flex-row lg:items-start" :class="{ 'high-contrast-mode': isHighContrast }">
+    <div v-if="isLoading" class="flex items-center justify-center w-full py-20 text-gray-400">
+      <span class="text-sm font-bold animate-pulse">Memuat data matriks...</span>
+    </div>
+
+    <div v-else class="flex flex-col items-center justify-center w-full gap-10 lg:flex-row lg:items-start" :class="{ 'high-contrast-mode': isHighContrast }">
       
       <div class="relative flex items-stretch mt-2 select-none">
         
@@ -39,18 +41,23 @@
                 :key="'cell-'+freq+'-'+impact"
                 role="gridcell"
                 class="relative flex flex-col items-center justify-center w-12 h-12 font-mono transition-all transform rounded-lg shadow-sm sm:w-14 sm:h-14 hover:scale-105 group"
-                :class="getCellClass(freq, impact)"
+                :class="getHighContrastClass(freq, impact)"
+                :style="!isHighContrast ? getDynamicStyle(freq, impact) : {}"
                 :aria-label="getAriaLabel(freq, impact)"
                 tabindex="0"
               >
-                <span class="z-10 text-base font-extrabold tracking-tight">{{ getOfficialValue(freq, impact) }}</span>
-                <span class="absolute bottom-0.5 right-1 text-[9px] opacity-45" aria-hidden="true">
-                  {{ getCategory(freq, impact).symbol }}
+                <span class="z-10 text-base font-extrabold tracking-tight" :class="getTextColor(freq, impact)">
+                  {{ getCellData(freq, impact).risk_value }}
+                </span>
+                <span class="absolute bottom-0.5 right-1 text-[9px] opacity-60" :class="getTextColor(freq, impact)" aria-hidden="true">
+                  {{ getCellData(freq, impact).symbol }}
                 </span>
 
                 <div class="absolute hidden group-hover:block group-focus:block bottom-full mb-2 w-max bg-gray-900 text-white text-[10px] p-2 rounded-md shadow-md z-30 pointer-events-none text-center leading-normal">
                   Koordinat F:{{ freq }} , D:{{ impact }}<br>
-                  <span class="font-bold text-yellow-400">Skor Kemenkeu: {{ getOfficialValue(freq, impact) }} ({{ getCategory(freq, impact).labelColor }})</span>
+                  <span class="font-bold" :style="{ color: getCellData(freq, impact).color_code }">
+                    Skor: {{ getCellData(freq, impact).risk_value }} ({{ getCellData(freq, impact).category }})
+                  </span>
                 </div>
               </div>
             </template>
@@ -70,84 +77,141 @@
           Klarifikasi Tingkat Risiko
         </h4>
         <div class="flex flex-col gap-3 text-xs" aria-labelledby="legend-title">
-          <div v-for="cat in uniqueCategories" :key="cat.name" class="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border border-gray-100 shadow-sm transition-all hover:bg-gray-100">
+          <div v-for="cat in uniqueCategories" :key="cat.category" class="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border border-gray-100 shadow-sm transition-all hover:bg-gray-100">
             <span 
               class="flex items-center justify-center w-6 h-6 text-xs font-extrabold rounded-lg shadow-sm shrink-0"
-              :class="cat.colorClass + (isHighContrast ? ' border border-gray-400' : '')"
+              :class="isHighContrast ? 'bg-white text-black border border-gray-400' : ''"
+              :style="!isHighContrast ? { backgroundColor: cat.color_code, color: getContrastYIQ(cat.color_code) } : {}"
               aria-hidden="true"
             >
               {{ cat.symbol }}
             </span>
             <div class="flex flex-col">
-              <span class="font-bold leading-tight text-gray-800">{{ cat.name }}</span>
-              <span class="text-[10px] text-gray-500 font-semibold mt-0.5">Kategori {{ cat.labelColor }}</span>
+              <span class="font-bold leading-tight text-gray-800">{{ cat.description }}</span>
+              <span class="text-[10px] text-gray-500 font-semibold mt-0.5">Kategori {{ cat.category }} ({{ cat.mitigation_level }})</span>
             </div>
           </div>
         </div>
       </div>
 
     </div>
-
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
+import api from '@/utils/api';
 
 const xAxis = [1, 2, 3, 4, 5];
 const reversedYAxis = [5, 4, 3, 2, 1];
 const isHighContrast = ref(false);
+const isLoading = ref(true);
+const matrixData = ref([]);
 
 const toggleHighContrast = () => {
   isHighContrast.value = !isHighContrast.value;
 };
 
-const officialMatrixLayout = {
-  5: { 1: 9, 2: 15, 3: 18, 4: 23, 5: 25 },
-  4: { 1: 6, 2: 12, 3: 16, 4: 19, 5: 24 },
-  3: { 1: 4, 2: 10, 3: 14, 4: 17, 5: 22 },
-  2: { 1: 2, 2: 7,  3: 11, 4: 13, 5: 21 },
-  1: { 1: 1, 2: 3,  3: 5,  4: 8,  5: 20 }
+// 🚨 PERBAIKAN: sebelumnya pakai fetch() langsung ke path relatif '/api/matriks/mapping'
+// (yang di Netlify tidak mengarah ke backend Vercel -> selalu gagal/CORS) dan token
+// 'access_token' yang TIDAK PERNAH disimpan di mana pun (komponen lain menyimpan
+// 'jwt_token', lihat utils/api.js). Akibatnya request selalu gagal diam-diam dan
+// matriks selalu jatuh ke fallback N/A. Sekarang pakai instance axios `api` yang sama
+// dengan komponen lain agar baseURL & Bearer token selalu konsisten dan data SELALU
+// mengikuti isi tabel risk_matrix_mapping di database.
+const fetchMatrixData = async () => {
+  try {
+    isLoading.value = true;
+    const response = await api.get('/matriks/mapping');
+    if (response.data && response.data.status === 'success') {
+      matrixData.value = response.data.data;
+    }
+  } catch (error) {
+    console.error('Gagal memuat data mapping matriks:', error);
+  } finally {
+    isLoading.value = false;
+  }
 };
 
-const getOfficialValue = (freq, impact) => officialMatrixLayout[freq]?.[impact] || 0;
-
-const getCategory = (freq, impact) => {
-  const score = getOfficialValue(freq, impact);
-  if (score <= 5)   return { name: 'Risiko Rendah', labelColor: 'Biru', colorClass: 'bg-blue-500 text-white', symbol: '●' };
-  if (score <= 11)  return { name: 'Risiko Sedang Rendah', labelColor: 'Hijau', colorClass: 'bg-green-500 text-white', symbol: '▲' };
-  if (score <= 15)  return { name: 'Risiko Sedang', labelColor: 'Kuning', colorClass: 'bg-yellow-400 text-yellow-950', symbol: '■' };
-  if (score <= 19)  return { name: 'Risiko Tinggi', labelColor: 'Jingga', colorClass: 'bg-orange-500 text-white', symbol: '◆' };
-  return { name: 'Risiko Sangat Tinggi', labelColor: 'Merah', colorClass: 'bg-red-600 text-white', symbol: '★' };
-};
-
-const uniqueCategories = computed(() => {
-  return [
-    { name: 'Risiko Rendah', labelColor: 'Biru', colorClass: 'bg-blue-500 text-white', symbol: '●' },
-    { name: 'Risiko Sedang Rendah', labelColor: 'Hijau', colorClass: 'bg-green-500 text-white', symbol: '▲' },
-    { name: 'Risiko Sedang', labelColor: 'Kuning', colorClass: 'bg-yellow-400 text-yellow-950', symbol: '■' },
-    { name: 'Risiko Tinggi', labelColor: 'Jingga', colorClass: 'bg-orange-500 text-white', symbol: '◆' },
-    { name: 'Risiko Sangat Tinggi', labelColor: 'Merah', colorClass: 'bg-red-600 text-white', symbol: '★' },
-  ];
+onMounted(() => {
+  fetchMatrixData();
 });
 
-const getCellClass = (freq, impact) => {
-  const cat = getCategory(freq, impact);
-  if (isHighContrast.value) {
-    if (cat.labelColor === 'Merah') return 'bg-black text-white border border-white ring-1 ring-black';
-    if (cat.labelColor === 'Jingga') return 'bg-gray-700 text-white border border-white';
-    if (cat.labelColor === 'Kuning') return 'bg-gray-400 text-black border border-gray-900';
-    if (cat.labelColor === 'Hijau') return 'bg-gray-200 text-black border border-gray-600';
-    return 'bg-white text-black border border-black';
+// Helper Function: Cek hex butuh teks hitam atau putih (YIQ Ratio)
+const getContrastYIQ = (hexcolor) => {
+  if(!hexcolor) return 'black';
+  hexcolor = hexcolor.replace("#", "");
+  const r = parseInt(hexcolor.substr(0,2),16);
+  const g = parseInt(hexcolor.substr(2,2),16);
+  const b = parseInt(hexcolor.substr(4,2),16);
+  const yiq = ((r*299)+(g*587)+(b*114))/1000;
+  return (yiq >= 128) ? 'black' : 'white';
+};
+
+const getCellData = (freq, impact) => {
+  const cell = matrixData.value.find(item => item.frequency === freq && item.impact === impact);
+  if (!cell) {
+    return { risk_value: 0, category: 'N/A', color_code: '#E5E7EB', description: '-', symbol: '-' }; // Fallback jika DB kosong
   }
-  return cat.colorClass;
+  
+  // Tentukan simbol secara dinamis berdasarkan hex/nama
+  let symbol = '●';
+  if(cell.category.toLowerCase().includes('hijau')) symbol = '▲';
+  if(cell.category.toLowerCase().includes('kuning')) symbol = '■';
+  if(cell.category.toLowerCase().includes('oranye')) symbol = '◆';
+  if(cell.category.toLowerCase().includes('merah')) symbol = '★';
+
+  return { ...cell, symbol };
+};
+
+const getTextColor = (freq, impact) => {
+  if (isHighContrast.value) return ''; 
+  const cell = getCellData(freq, impact);
+  return getContrastYIQ(cell.color_code) === 'white' ? 'text-white' : 'text-gray-900';
+};
+
+const getDynamicStyle = (freq, impact) => {
+  const cell = getCellData(freq, impact);
+  return { backgroundColor: cell.color_code };
+};
+
+const getHighContrastClass = (freq, impact) => {
+  if (!isHighContrast.value) return '';
+  const cat = getCellData(freq, impact).category.toLowerCase();
+  if (cat.includes('merah')) return 'bg-black text-white border border-white ring-1 ring-black';
+  if (cat.includes('oranye')) return 'bg-gray-700 text-white border border-white';
+  if (cat.includes('kuning')) return 'bg-gray-400 text-black border border-gray-900';
+  if (cat.includes('hijau')) return 'bg-gray-200 text-black border border-gray-600';
+  return 'bg-white text-black border border-black';
 };
 
 const getAriaLabel = (freq, impact) => {
-  const cat = getCategory(freq, impact);
-  const score = getOfficialValue(freq, impact);
-  return `Frekuensi ${freq}, Dampak ${impact}, Skor Kemenkeu ${score}, Klasifikasi ${cat.name} Kategori ${cat.labelColor}`;
+  const cell = getCellData(freq, impact);
+  return `Frekuensi ${freq}, Dampak ${impact}, Skor ${cell.risk_value}, Klasifikasi ${cell.description} Kategori ${cell.category}`;
 };
+
+// Ekstrak Legend Kategori Unik dari Data Matrix
+const uniqueCategories = computed(() => {
+  const uniqueMap = new Map();
+  matrixData.value.forEach(item => {
+    let symbol = '●';
+    const catLower = item.category.toLowerCase();
+    if (catLower.includes('hijau')) symbol = '▲';
+    if (catLower.includes('kuning')) symbol = '■';
+    if (catLower.includes('oranye') || catLower.includes('jingga')) symbol = '◆';
+    if (catLower.includes('merah')) symbol = '★';
+
+    const existing = uniqueMap.get(item.category);
+    // Simpan baris dengan risk_value PALING RENDAH per kategori, supaya urutan legend
+    // selalu konsisten & benar tanpa bergantung urutan baris yang dikembalikan database.
+    if (!existing || item.risk_value < existing.risk_value) {
+      uniqueMap.set(item.category, { ...item, symbol });
+    }
+  });
+
+  // Urutkan legend dari risiko terendah ke tertinggi
+  return Array.from(uniqueMap.values()).sort((a, b) => a.risk_value - b.risk_value);
+});
 </script>
 
 <style scoped>

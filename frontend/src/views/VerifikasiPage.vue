@@ -32,7 +32,7 @@
 
           <div class="flex items-center gap-2 mb-4">
             <span class="text-xs text-gray-500">Skor Risiko:</span>
-            <span :class="getCategoryBg(item.risk_category)" class="px-2 py-1 text-xs font-bold text-white rounded">{{ item.risk_value }} - {{ item.risk_category }}</span>
+            <span :class="getCategoryTextClass(item.risk_category)" :style="getCategoryBg(item.risk_category)" class="px-2 py-1 text-xs font-bold rounded">{{ item.risk_value }} - {{ item.risk_category }}</span>
           </div>
 
           <div v-if="item.has_document" class="flex items-center justify-between p-2 mb-4 border border-blue-100 rounded-lg bg-blue-50">
@@ -64,6 +64,16 @@ import api from '@/utils/api';
 
 const pendingAssessments = ref([]);
 
+// 🚨 PERBAIKAN: sebelumnya getCategoryBg() hardcode kategori
+// ('Biru','Hijau','Kuning','Jingga','Merah'). Nama kategori asli di tabel
+// risk_matrix_mapping sudah jadi 'Hijau Tua' & 'Oranye', jadi badge untuk 2 kategori
+// ini SELALU jatuh ke fallback abu-abu meski datanya ada — paling berbahaya justru di
+// halaman verifikasi ini karena admin jadi tidak bisa melihat tingkat risiko sekilas
+// dari warna saat menyetujui/menolak. Sekarang warna diambil langsung dari
+// risk_matrix_mapping via /matriks/mapping, pola yang sama dengan MatrixVisual.vue,
+// DashboardPage.vue, AnalisisPerubahan.vue, & TrenRisikoChart.vue.
+const categoryColorMap = ref({}); // { [category]: color_code }
+
 const fetchPendingAssessments = async () => {
   try {
     const res = await api.get('/admin/assessments/pending');
@@ -86,13 +96,33 @@ const verifyAssessment = async (id, action) => {
   }
 };
 
+const loadCategoryColors = async () => {
+  try {
+    const res = await api.get('/matriks/mapping');
+    if (res.data && res.data.data) {
+      const map = {};
+      res.data.data.forEach(item => { map[item.category] = item.color_code; });
+      categoryColorMap.value = map;
+    }
+  } catch (error) {
+    console.error('Gagal memuat warna kategori matriks:', error);
+  }
+};
+
+// Style background diambil langsung dari color_code di database (bukan kelas Tailwind statis)
 const getCategoryBg = (cat) => {
-  if (cat === 'Biru' || cat === 'Risiko Rendah') return 'bg-blue-500';
-  if (cat === 'Hijau' || cat === 'Risiko Sedang Rendah') return 'bg-green-500';
-  if (cat === 'Kuning' || cat === 'Risiko Sedang') return 'bg-yellow-400 text-yellow-900';
-  if (cat === 'Jingga' || cat === 'Risiko Tinggi') return 'bg-orange-500';
-  if (cat === 'Merah' || cat === 'Risiko Sangat Tinggi') return 'bg-red-600';
-  return 'bg-gray-500';
+  return { backgroundColor: categoryColorMap.value[cat] || '#6B7280' }; // fallback abu-abu jika kategori tak dikenali
+};
+
+// Cek kontras warna (YIQ) supaya teks tetap terbaca, terutama untuk warna terang seperti Kuning
+const getCategoryTextClass = (cat) => {
+  const hex = (categoryColorMap.value[cat] || '').replace('#', '');
+  if (hex.length !== 6) return 'text-white';
+  const r = parseInt(hex.substr(0, 2), 16);
+  const g = parseInt(hex.substr(2, 2), 16);
+  const b = parseInt(hex.substr(4, 2), 16);
+  const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+  return yiq >= 128 ? 'text-gray-900' : 'text-white';
 };
 
 // Download Dokumen Bukti
@@ -117,5 +147,6 @@ const downloadDocument = async (assessmentId, filename) => {
 
 onMounted(() => {
   fetchPendingAssessments();
+  loadCategoryColors();
 });
 </script>

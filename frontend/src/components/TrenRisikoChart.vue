@@ -25,7 +25,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue';
+import { ref, watch } from 'vue';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -60,6 +60,12 @@ const props = defineProps({
 });
 
 const chartData = ref({});
+
+// 🚨 PERBAIKAN: cache pemetaan kategori/warna dari tabel risk_matrix_mapping di DB,
+// dipakai untuk mewarnai titik grafik & label tooltip secara dinamis (pola yang sama
+// dipakai di MatrixVisual.vue), bukan warna biru flat statis seperti sebelumnya.
+const matrixMapping = ref([]);
+
 const chartOptions = ref({
   responsive: true,
   maintainAspectRatio: false,
@@ -82,22 +88,65 @@ const chartOptions = ref({
       padding: 10,
       callbacks: {
         label: function(context) {
-          return ` Skor Risiko: ${context.parsed.y}`;
+          const val = context.parsed.y;
+          if (val === null || val === undefined) return ' Belum ada data';
+          const cat = getCategoryForValue(val);
+          return cat ? ` Skor Risiko: ${val} (${cat.category})` : ` Skor Risiko: ${val}`;
         }
       }
     }
   }
 });
 
+// Cari kategori & warna dari tabel risk_matrix_mapping berdasarkan risk_value,
+// supaya warna titik grafik SELALU sinkron dengan definisi warna di database.
+const getCategoryForValue = (value) => {
+  if (value === null || value === undefined) return null;
+  return matrixMapping.value.find(m => m.risk_value === value) || null;
+};
+
+// Ambil sekali saja data pemetaan matriks (jarang berubah), cache di matrixMapping.
+const ensureMatrixMapping = async () => {
+  if (matrixMapping.value.length) return;
+  try {
+    const res = await api.get('/matriks/mapping');
+    if (res.data && res.data.status === 'success') {
+      matrixMapping.value = res.data.data;
+    }
+  } catch (error) {
+    console.error('Gagal memuat data mapping matriks untuk grafik tren:', error);
+  }
+};
+
 const loadChartData = async () => {
   if (!props.indicatorId) return;
 
   try {
-    const res = await api.get('/risiko/assessments');
-    const allData = res.data.data || [];
-    
+    await ensureMatrixMapping();
+
+    // 🚨 PERBAIKAN: sebelumnya P26 & R26 di-hardcode (17 & 5) untuk SEMUA indikator
+    // ("Asumsi Baseline ... Sesuaikan dengan logika bisnis KPPN Anda"). Padahal setiap
+    // indikator sudah punya nilai p26_initial & r26_target MASING-MASING di tabel
+    // risk_indicators, dan endpoint /risiko/indicators sudah mengembalikannya sebagai
+    // field "p26" & "r26". Sekarang grafik selalu memakai baseline & target ASLI milik
+    // indikator yang sedang ditampilkan, bukan angka tetap yang sama untuk semua indikator.
+    const [indicatorsRes, assessmentsRes] = await Promise.all([
+      api.get('/risiko/indicators'),
+      api.get('/risiko/assessments')
+    ]);
+
+    const indicators = indicatorsRes.data.data || [];
+    const indicator = indicators.find(i => Number(i.id) === Number(props.indicatorId));
+
+    // Jika admin belum mengisi P26/R26 di database untuk indikator ini, biarkan null
+    // (titik kosong / garis tidak tampil) daripada menampilkan angka palsu.
+    const dataP26 = indicator?.p26 ?? null;
+    const dataR26 = indicator?.r26 ?? null;
+
+    const allData = assessmentsRes.data.data || [];
+
     // Filter data hanya untuk indikator yang dipilih
-    const filtered = allData.filter(a => a.indicator_id === props.indicatorId);
+    const filtered = allData.filter(a => Number(a.indicator_id) === Number(props.indicatorId));
 
     // Siapkan array data untuk setiap titik (Fallback jika belum isi diatur ke null agar grafik terputus natural)
     const getScore = (q) => {
@@ -110,19 +159,20 @@ const loadChartData = async () => {
     const dataQ3 = getScore('Q3');
     const dataQ4 = getScore('Q4');
 
-    // Asumsi Baseline: P26 (17) dan R26 (5) - Sesuaikan dengan logika bisnis KPPN Anda
-    const dataP26 = 17; 
-    const dataR26 = 5;  
+    const actualPoints = [dataP26, dataQ1, dataQ2, dataQ3, dataQ4, dataR26];
 
     chartData.value = {
       labels: ['P26 (Baseline)', 'Q1', 'Q2', 'Q3', 'Q4', 'R26 (Target)'],
       datasets: [
         {
           label: 'Skor Risiko',
-          data: [dataP26, dataQ1, dataQ2, dataQ3, dataQ4, dataR26],
+          data: actualPoints,
           borderColor: '#2563eb', // Blue-600
           backgroundColor: 'rgba(37, 99, 235, 0.1)',
-          pointBackgroundColor: '#ffffff',
+          // 🚨 PERBAIKAN: warna tiap titik kini ikut kategori risk_matrix_mapping di DB
+          // (Biru/Hijau Tua/Kuning/Oranye/Merah) berdasarkan skor risiko di titik itu,
+          // bukan putih statis seperti sebelumnya.
+          pointBackgroundColor: actualPoints.map(v => getCategoryForValue(v)?.color_code || '#ffffff'),
           pointBorderColor: '#2563eb',
           pointBorderWidth: 2,
           pointRadius: 5,
@@ -133,12 +183,15 @@ const loadChartData = async () => {
         },
         {
           label: 'Garis Target R26',
-          data: [5, 5, 5, 5, 5, 5], // Garis lurus di angka 5 (Risiko Rendah)
+          // 🚨 PERBAIKAN: garis batas aman sekarang memakai r26_target ASLI indikator ini
+          // (bukan hardcode 5 untuk semua indikator seperti sebelumnya)
+          data: [dataR26, dataR26, dataR26, dataR26, dataR26, dataR26],
           borderColor: '#f87171', // Red-400
           borderDash: [5, 5], // Garis putus-putus
           pointRadius: 0,
           fill: false,
-          tension: 0
+          tension: 0,
+          spanGaps: true
         }
       ]
     };

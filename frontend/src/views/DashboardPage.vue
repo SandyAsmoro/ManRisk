@@ -32,11 +32,11 @@
 
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
       <div v-for="color in orderedColors" :key="color"
-        class="flex flex-col justify-between p-5 text-center text-white transition-transform shadow-sm rounded-xl hover:scale-105"
-        :class="getBgColor(color)">
-        <h3 class="text-xs font-bold tracking-wider uppercase opacity-90">{{ getDescriptiveName(color) }}</h3>
-        <p class="my-2 text-4xl font-extrabold">{{ summary[color] || 0 }}</p>
-        <span class="text-[10px] bg-white bg-opacity-20 px-2 py-0.5 rounded-full mx-auto font-medium">
+        class="flex flex-col justify-between p-5 text-center transition-transform shadow-sm rounded-xl hover:scale-105"
+        :style="getCategoryStyle(color)">
+        <h3 class="text-xs font-bold tracking-wider uppercase opacity-90" :class="getCardTextClass(color)">{{ getDescriptiveName(color) }}</h3>
+        <p class="my-2 text-4xl font-extrabold" :class="getCardTextClass(color)">{{ summary[color] || 0 }}</p>
+        <span class="text-[10px] bg-white bg-opacity-20 px-2 py-0.5 rounded-full mx-auto font-medium" :class="getCardTextClass(color)">
           {{ getLegendSymbol(color) }} Kategori {{ color }}
         </span>
       </div>
@@ -133,49 +133,81 @@ import { useAuthStore } from '@/store/auth';
 
 const authStore = useAuthStore();
 const indicators = ref([]);
-const orderedColors = ['Biru', 'Hijau', 'Kuning', 'Jingga', 'Merah'];
 
-const summary = ref({
-  'Biru': 0,
-  'Hijau': 0,
-  'Kuning': 0,
-  'Jingga': 0,
-  'Merah': 0
-});
+// 🚨 PERBAIKAN: sebelumnya kategori, warna, label, & simbol di-hardcode
+// ('Biru','Hijau','Kuning','Jingga','Merah'). Setelah data risk_matrix_mapping
+// di database diperbarui, nama kategori yang sebenarnya jadi 'Hijau Tua' & 'Oranye'
+// (bukan 'Hijau' & 'Jingga') — akibatnya 2 kartu ini TIDAK PERNAH menampilkan
+// hitungan yang benar walau datanya ada. Sekarang seluruh kategori, warna, deskripsi,
+// dan urutan kartu diambil langsung dari tabel risk_matrix_mapping via /matriks/mapping,
+// jadi akan SELALU ikut menyesuaikan kalau suatu saat kategori di database diubah lagi.
+const categoryMeta = ref([]); // [{ category, color_code, description, mitigation_level, risk_value (min) }]
+const orderedColors = computed(() => categoryMeta.value.map(c => c.category));
+
+const summary = ref({});
 const selectedQuarter = ref('Q1');
 let autoRefreshInterval = null;
 
+const getCategoryInfo = (color) => categoryMeta.value.find(c => c.category === color);
+
 const getDescriptiveName = (color) => {
-  const names = {
-    'Biru': 'Sangat Rendah',
-    'Hijau': 'Rendah',
-    'Kuning': 'Sedang',
-    'Jingga': 'Tinggi',
-    'Merah': 'Sangat Tinggi'
-  };
-  return names[color] || color;
+  const info = getCategoryInfo(color);
+  return info ? info.description : color;
 };
 
-const getBgColor = (color) => {
-  const map = {
-    'Biru': 'bg-blue-600',
-    'Hijau': 'bg-green-600',
-    'Kuning': 'bg-yellow-500',
-    'Jingga': 'bg-orange-500',
-    'Merah': 'bg-red-600'
-  };
-  return map[color] || 'bg-gray-600';
+// Style background diambil langsung dari color_code di database (bukan kelas Tailwind statis)
+const getCategoryStyle = (color) => {
+  const info = getCategoryInfo(color);
+  return { backgroundColor: info ? info.color_code : '#4B5563' };
+};
+
+// Cek kontras warna background (YIQ) supaya teks tetap terbaca,
+// terutama untuk warna terang seperti Kuning (#FFFF00).
+const getCardTextClass = (color) => {
+  const info = getCategoryInfo(color);
+  if (!info || !info.color_code) return 'text-white';
+  const hex = info.color_code.replace('#', '');
+  const r = parseInt(hex.substr(0, 2), 16);
+  const g = parseInt(hex.substr(2, 2), 16);
+  const b = parseInt(hex.substr(4, 2), 16);
+  const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+  return yiq >= 128 ? 'text-gray-900' : 'text-white';
 };
 
 const getLegendSymbol = (color) => {
-  const symbols = {
-    'Biru': '●',
-    'Hijau': '▲',
-    'Kuning': '■',
-    'Jingga': '◆',
-    'Merah': '★'
-  };
-  return symbols[color] || '•';
+  const lower = color.toLowerCase();
+  if (lower.includes('hijau')) return '▲';
+  if (lower.includes('kuning')) return '■';
+  if (lower.includes('oranye') || lower.includes('jingga')) return '◆';
+  if (lower.includes('merah')) return '★';
+  return '●';
+};
+
+// Ambil daftar kategori unik (+ warna, deskripsi, level mitigasi) dari database
+const loadMatrixCategories = async () => {
+  try {
+    const res = await api.get('/matriks/mapping');
+    if (res.data && res.data.data) {
+      const map = new Map();
+      res.data.data.forEach(item => {
+        const existing = map.get(item.category);
+        // Simpan baris dengan risk_value PALING RENDAH per kategori sbg representasi
+        // (warna/deskripsi tetap sama per kategori, hanya dipakai utk urutan kartu).
+        if (!existing || item.risk_value < existing.risk_value) {
+          map.set(item.category, {
+            category: item.category,
+            color_code: item.color_code,
+            description: item.description,
+            mitigation_level: item.mitigation_level,
+            risk_value: item.risk_value
+          });
+        }
+      });
+      categoryMeta.value = Array.from(map.values()).sort((a, b) => a.risk_value - b.risk_value);
+    }
+  } catch (error) {
+    console.error('Gagal memuat kategori matriks dari database:', error);
+  }
 };
 
 const loadDashboardData = async () => {
@@ -183,7 +215,11 @@ const loadDashboardData = async () => {
     const currentYear = new Date().getFullYear();
     const summaryRes = await api.get(`/dashboard/summary?quarter=${selectedQuarter.value}&year=${currentYear}`);
     if (summaryRes.data && summaryRes.data.data) {
-      summary.value = summaryRes.data.data;
+      // Pastikan semua kategori yang ada di DB tetap tampil (default 0) walau
+      // belum ada asesmen utk kategori tersebut pada periode ini.
+      const base = {};
+      categoryMeta.value.forEach(c => { base[c.category] = 0; });
+      summary.value = { ...base, ...summaryRes.data.data };
     }
   } catch (error) {
     console.error("Gagal memuat data ringkasan kartu berkala:", error);
@@ -215,7 +251,8 @@ const filteredIndicators = computed(() => {
   });
 });
 
-onMounted(() => {
+onMounted(async () => {
+  await loadMatrixCategories();
   loadDashboardData();
 
   autoRefreshInterval = setInterval(() => {
