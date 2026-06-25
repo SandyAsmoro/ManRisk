@@ -15,14 +15,43 @@ from config import is_editable
 from werkzeug.utils import secure_filename
 from sqlalchemy import asc, case
 
+# === IMPORT TAMBAHAN UNTUK GOOGLE DRIVE ===
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+
 logger = logging.getLogger(__name__)
 risiko_bp = Blueprint('risiko', __name__)
 
-# 🚨 INISIALISASI SUPABASE CLIENT
+# =====================================================================
+# 1. INISIALISASI DUAL-STORAGE (SUPABASE LAMA & GDRIVE BARU)
+# =====================================================================
+
+# A. Supabase Client (Dipertahankan untuk akses file lama)
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
-supabase_client: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
-# UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads', 'bukti_pendukung')
+supabase_client = None
+if supabase_url and supabase_key:
+    from supabase import create_client
+    supabase_client = create_client(supabase_url, supabase_key)
+
+# B. Google Drive API (Untuk semua file baru)
+SCOPES = ['https://www.googleapis.com/auth/drive']
+GDRIVE_FOLDER_ID = os.environ.get('GDRIVE_FOLDER_ID')
+GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+
+creds = None
+drive_service = None
+
+if GOOGLE_CREDENTIALS_JSON:
+    try:
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES)
+        drive_service = build('drive', 'v3', credentials=creds)
+        logger.info("Google Drive API berhasil diinisialisasi.")
+    except Exception as e:
+        logger.error(f"Gagal memuat kredensial Google Drive: {e}")
 
 
 def get_previous_quarter(current_quarter, current_year):
@@ -252,6 +281,69 @@ def batch_submit():
 
     return jsonify({"status": "success", "message": f"Berhasil mengirim final {len(drafts)} indikator risiko untuk {quarter} Tahun {year}!"})
 
+# =====================================================================
+# 2. ENDPOINT UPLOAD (HANYA MENGGUNAKAN GDRIVE)
+# =====================================================================
+@risiko_bp.route('/assessments/<assessment_id>/document', methods=['POST'])
+@jwt_required()
+def upload_document(assessment_id):
+    user_id = get_jwt_identity()
+    has_access, assessment_or_error, status_code = check_section_access(assessment_id, user_id)
+    if not has_access:
+        return jsonify(assessment_or_error), status_code
+
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'status': 'error', 'message': 'File tidak ditemukan.'}), 400
+
+    if not drive_service:
+        return jsonify({'status': 'error', 'message': 'Layanan Google Drive belum terkonfigurasi di server.'}), 500
+
+    original_filename = secure_filename(file.filename)
+
+    try:
+        # Konversi file ke stream yang bisa dibaca Google API
+        file_stream = io.BytesIO(file.read())
+        
+        # Meta-data file untuk Google Drive
+        file_metadata = {
+            'name': f"{assessment_id}_{original_filename}",
+            'parents': [GDRIVE_FOLDER_ID]
+        }
+        
+        media = MediaIoBaseUpload(file_stream, mimetype=file.content_type, resumable=True)
+        
+        # Eksekusi Upload ke Drive
+        uploaded_file = drive_service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id'
+        ).execute()
+        
+        drive_file_id = uploaded_file.get('id')
+
+        # Hapus dokumen lama di DB jika ada (Replace)
+        old_doc = SupportingDocument.query.filter_by(assessment_id=assessment_id).first()
+        if old_doc:
+            db.session.delete(old_doc)
+
+        # Simpan ke Database
+        new_doc = SupportingDocument(
+            assessment_id=assessment_id,
+            original_filename=original_filename,
+            stored_filename=drive_file_id,  # Menyimpan ID Google Drive (bukan nama file Supabase)
+            mime_type=file.content_type
+        )
+        db.session.add(new_doc)
+        db.session.commit()
+
+        return jsonify({'status': 'success', 'message': 'Dokumen berhasil diunggah ke Google Drive.'})
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Gagal upload ke Drive: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Gagal upload file: {str(e)}'}), 500
+
 # ==========================================
 # ENDPOINT HAPUS DOKUMEN BUKTI PENDUKUNG
 # ==========================================
@@ -406,83 +498,93 @@ def update_assessment(assessment_id):
         logger.error(f"Error update assessment: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Terjadi kesalahan internal: {str(e)}'}), 500
 
-# ==========================================
-# ENDPOINT DELETE (HAPUS KESELURUHAN DATA ASESMEN)
-# ==========================================
+# =====================================================================
+# 4. ENDPOINT DELETE (HAPUS DATA & FILE DARI DRIVE/SUPABASE)
+# =====================================================================
 @risiko_bp.route('/assessments/<assessment_id>', methods=['DELETE'])
 @jwt_required()
 def delete_assessment(assessment_id):
     user_id = get_jwt_identity()
     user = db.session.get(User, user_id)
 
-    # 1. Cek Hak Akses (Pastikan hanya pemilik atau admin yang bisa menghapus)
-    has_access, assessment_or_error, status_code = check_section_access(assessment_id, user_id)
+    has_access, assessment, status_code = check_section_access(assessment_id, user_id)
     if not has_access:
-        return jsonify(assessment_or_error), status_code
-
-    assessment = assessment_or_error
-
-    # 2. Validasi Kunci Periode & Status Verifikasi
-    is_unlocked, msg = check_quarter_lock(assessment.quarter, user.role)
-    if not is_unlocked and user.role != 'admin':
-        return jsonify({'status': 'error', 'message': msg}), 403
+        return jsonify(assessment), status_code
 
     if assessment.status == 'verified' and user.role != 'admin':
-        return jsonify({'status': 'error', 'message': 'Data ini telah disetujui (Verified) dan tidak dapat dihapus.'}), 403
+        return jsonify({'status': 'error', 'message': 'Data yang telah disetujui tidak dapat dihapus.'}), 403
 
     try:
-        # 3. Cari dan Hapus Dokumen Fisik di Supabase (Jika Ada)
+        # Cari dan Hapus Dokumen Fisik
         doc = SupportingDocument.query.filter_by(assessment_id=assessment_id).first()
-        if doc and supabase_client:
+        if doc:
             try:
-                supabase_client.storage.from_('bukti_pendukung').remove([doc.stored_filename])
+                if "." in doc.stored_filename and supabase_client:
+                    # Hapus dari Supabase
+                    supabase_client.storage.from_('bukti_pendukung').remove([doc.stored_filename])
+                elif drive_service:
+                    # Hapus dari Google Drive
+                    drive_service.files().delete(fileId=doc.stored_filename).execute()
             except Exception as e:
-                logger.error(f"Gagal menghapus file dari Supabase Storage: {str(e)}")
+                logger.error(f"Gagal menghapus file dari Storage: {str(e)}")
 
-        # 4. Hapus Asesmen dari Database
-        # (Catatan: Baris tabel SupportingDocument akan ikut terhapus otomatis karena cascade='all, delete-orphan' di models.py)
         db.session.delete(assessment)
         db.session.commit()
-        return jsonify({'status': 'success', 'message': 'Data asesmen berhasil dihapus.'})
+        return jsonify({'status': 'success', 'message': 'Data asesmen dan dokumen berhasil dihapus.'})
         
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error hapus asesmen: {str(e)}")
-        return jsonify({'status': 'error', 'message': 'Terjadi kesalahan internal saat menghapus data.'}), 500
+        return jsonify({'status': 'error', 'message': 'Terjadi kesalahan saat menghapus data.'}), 500
 
-# ==========================================
-# ENDPOINT DOWNLOAD DOKUMEN BUKTI PENDUKUNG
-# ==========================================
-
+# =====================================================================
+# 3. ENDPOINT DOWNLOAD (MENDUKUNG SUPABASE & GDRIVE)
+# =====================================================================
 @risiko_bp.route('/assessments/<assessment_id>/document', methods=['GET'])
 @jwt_required()
 def download_document(assessment_id):
     user_id = get_jwt_identity()
-    user = db.session.get(User, user_id)
-    
     has_access, assessment_or_error, status_code = check_section_access(assessment_id, user_id)
     if not has_access:
         return jsonify(assessment_or_error), status_code
         
     doc = SupportingDocument.query.filter_by(assessment_id=assessment_id).first()
     if not doc:
-        return jsonify({'status': 'error', 'message': 'Dokumen bukti pendukung tidak ditemukan di database.'}), 404
-        
-    if not supabase_client:
-        return jsonify({'status': 'error', 'message': 'Konfigurasi Cloud Storage gagal.'}), 500
+        return jsonify({'status': 'error', 'message': 'Dokumen tidak ditemukan di database.'}), 404
 
     try:
-        # Tarik data fisik file dari Supabase Storage dalam format bytes
-        file_data = supabase_client.storage.from_('bukti_pendukung').download(doc.stored_filename)
-        
-        from flask import send_file
-        import io
-        return send_file(
-            io.BytesIO(file_data), 
-            mimetype=doc.mime_type, 
-            as_attachment=True, 
-            download_name=doc.original_filename
-        )
+        # CEK: Jika format nama file mengandung "." (Contoh: file.pdf), berarti ini file Supabase
+        if "." in doc.stored_filename:
+            if not supabase_client:
+                return jsonify({'status': 'error', 'message': 'Konfigurasi Supabase hilang.'}), 500
+            
+            file_data = supabase_client.storage.from_('bukti_pendukung').download(doc.stored_filename)
+            return send_file(
+                io.BytesIO(file_data), 
+                mimetype=doc.mime_type, 
+                as_attachment=True, 
+                download_name=doc.original_filename
+            )
+            
+        # JIKA TIDAK: Berarti ini file ID Google Drive (Contoh: 1aBcD2eF...)
+        else:
+            if not drive_service:
+                return jsonify({'status': 'error', 'message': 'Konfigurasi Google Drive hilang.'}), 500
+
+            request_drive = drive_service.files().get_media(fileId=doc.stored_filename)
+            file_stream = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_stream, request_drive)
+            
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+
+            file_stream.seek(0)
+            return send_file(
+                file_stream, 
+                mimetype=doc.mime_type, 
+                as_attachment=True, 
+                download_name=doc.original_filename
+            )
     except Exception as e:
-        logger.error(f"Gagal download file dari Supabase: {str(e)}")
-        return jsonify({'status': 'error', 'message': 'Gagal mengambil file dari Cloud Storage. File mungkin telah terhapus.'}), 500
+        logger.error(f"Gagal download file: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Gagal download file: {str(e)}'}), 500

@@ -1,7 +1,6 @@
-# ...\ManRiskMSKI\backend\routes\laporan.py
-
 import os
 import io
+import json
 import zipfile
 from datetime import datetime
 from flask import Blueprint, request, jsonify, send_file, make_response
@@ -10,26 +9,40 @@ from extensions import db
 from models import SupportingDocument, RiskAssessment, RiskIndicator, User
 import pandas as pd
 from fpdf import FPDF
-from supabase import create_client, Client
+
+# === IMPORT TAMBAHAN UNTUK GOOGLE DRIVE ===
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
 laporan_bp = Blueprint('laporan', __name__)
 
-# 🚨 INISIALISASI SUPABASE CLIENT
+# =====================================================================
+# 1. INISIALISASI DUAL-STORAGE (SUPABASE & GOOGLE DRIVE)
+# =====================================================================
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
-supabase_client: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
+supabase_client = None
+if supabase_url and supabase_key:
+    from supabase import create_client
+    supabase_client = create_client(supabase_url, supabase_key)
 
-# Fungsi Helper untuk mencari Kuartal Sebelumnya
-def get_previous_quarter(current_quarter, current_year):
-    if current_quarter == 'Q1':
-        return 'Q4', current_year - 1
-    else:
-        try:
-            q_num = int(current_quarter[1])
-            return f'Q{q_num - 1}', current_year
-        except:
-            return None, current_year
+SCOPES = ['https://www.googleapis.com/auth/drive']
+GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+creds = None
+drive_service = None
 
+if GOOGLE_CREDENTIALS_JSON:
+    try:
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        drive_service = build('drive', 'v3', credentials=creds)
+    except Exception as e:
+        print(f"Gagal memuat kredensial Google Drive: {e}")
+
+# =====================================================================
+# FUNGSI HELPER: TARIK DATA DATABASE UNTUK EKSPOR TABEL
+# =====================================================================
 def get_export_data(quarter, year, user):
     """Helper untuk menarik data dari database berdasarkan filter"""
     query = db.session.query(RiskAssessment, RiskIndicator).join(RiskIndicator).filter(RiskAssessment.status == 'verified')
@@ -42,42 +55,25 @@ def get_export_data(quarter, year, user):
     if year:
         query = query.filter(RiskAssessment.year == int(year))
         
-    results = query.all()
-    
+    assessments = query.all()
     data = []
-    for ass, ind in results:
-        # Cari data dari triwulan sebelumnya
-        prev_q, prev_y = get_previous_quarter(ass.quarter, ass.year)
-        prev_ass = None
-        if prev_q:
-            prev_ass = RiskAssessment.query.filter_by(
-                indicator_id=ind.id, 
-                section=ass.section, 
-                quarter=prev_q, 
-                year=prev_y
-            ).first()
-            
-        prev_text = f"{prev_q} (Skor: {prev_ass.risk_value})" if prev_ass else f"{prev_q} (Kosong)"
-        
+    for ass, ind in assessments:
         data.append({
-            "Kode IKU": ind.indicator_code,
-            "Indikator Kinerja": ind.indicator_name,
-            "IRU": ind.iru_description or "-",
-            "Kejadian Risiko": ind.indicator_description or "-",
-            "PIC": ass.section,
-            "P26": ind.p26_initial,
-            "R26": ind.r26_target,
-            "Triwulan Sebelumnya": prev_text,
-            "Triwulan": ass.quarter,
-            "Tahun": ass.year,
-            "Skor Risiko (Current)": ass.risk_value,
-            "Kategori": ass.risk_category,
-            "Alasan Perubahan Risiko": ass.mitigation_action or "-"
+            'Kode IKU': ind.indicator_code,
+            'PIC': ass.section,
+            'IRU': ind.name,
+            'Kejadian Risiko': ind.risk_event,
+            'P26': ass.p26_score,
+            'R26': ass.r26_score,
+            'Triwulan Sebelumnya': ass.previous_quarter_score or '-',
+            'Triwulan': ass.quarter,
+            'Skor Risiko (Current)': ass.risk_value,
+            'Alasan Perubahan Risiko': ass.change_reason or '-'
         })
     return data
 
 # ==========================================
-# ENDPOINT EXPORT DATA (CSV, EXCEL, PDF)
+# 2. ENDPOINT EXPORT DATA (CSV, EXCEL, PDF)
 # ==========================================
 @laporan_bp.route('/export', methods=['GET'])
 @jwt_required()
@@ -161,21 +157,16 @@ def export_data():
             # --- ALGORITMA PENENTU TINGGI BARIS (DYNAMIC ROW HEIGHT) ---
             max_lines = 1
             for i, text in enumerate(row_data):
-                # 1. Hitung panjang teks aktual
                 text_width = pdf.get_string_width(text)
-                # 2. Bagi dengan lebar kolom (dikurangi sedikit margin) untuk mengetahui butuh berapa baris
                 estimated_lines = int((text_width / (widths[i] - 3)) + 1)
-                # 3. Tambahkan juga jika ada \n manual dari user
                 total_lines = estimated_lines + text.count('\n')
                 
                 if total_lines > max_lines:
                     max_lines = total_lines
                     
-            # Tinggi 1 baris tabel = jumlah baris maksimal dikali tinggi per baris
             row_height = max_lines * line_h
             
             # --- CEK HALAMAN BARU ---
-            # Jika batas bawah baris ini melewati batas aman halaman (190mm dari 210mm), buat page baru
             if pdf.get_y() + row_height > 190:
                 pdf.add_page()
                 draw_table_header()
@@ -186,20 +177,11 @@ def export_data():
             # --- CETAK SETIAP KOTAK DALAM BARIS ---
             for i, text in enumerate(row_data):
                 x_before = pdf.get_x()
-                
-                # Gambar kotak luarnya (frame cell)
                 pdf.rect(x_before, y_before, widths[i], row_height)
-                
-                # Tentukan rata tengah atau rata kiri
                 align = 'C' if i in [0, 1, 4, 5, 6, 7] else 'L'
-                
-                # Cetak teks multiline di dalam frame
                 pdf.multi_cell(w=widths[i], h=line_h, txt=text, border=0, align=align)
-                
-                # FPDF multi_cell otomatis melempar kursor ke bawah, kita paksa kembali ke kanan untuk cell berikutnya
                 pdf.set_xy(x_before + widths[i], y_before)
                 
-            # Setelah semua kolom dicetak, lempar kursor ke baris tabel selanjutnya
             pdf.set_xy(10, y_before + row_height)
             
         pdf_output = io.BytesIO(pdf.output(dest='S').encode('latin1'))
@@ -210,7 +192,7 @@ def export_data():
         return jsonify({'status': 'error', 'message': 'Format ekspor tidak didukung.'}), 400
 
 # ==========================================
-# ENDPOINT EXPORT ZIP (BUKTI PENDUKUNG VIA SUPABASE)
+# 3. ENDPOINT EXPORT ZIP (DUAL STORAGE: SUPABASE & GDRIVE)
 # ==========================================
 @laporan_bp.route('/export-zip', methods=['GET'])
 @jwt_required()
@@ -239,25 +221,42 @@ def export_zip():
     if not documents:
         return jsonify({"status": "error", "message": "Tidak ada dokumen bukti fisik yang diunggah pada periode ini."}), 404
 
-    if not supabase_client:
-        return jsonify({"status": "error", "message": "Konfigurasi Supabase Storage belum diatur di server."}), 500
-
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
         for doc in documents:
             try:
-                # Unduh file bytes langsung dari Supabase Storage
-                file_data = supabase_client.storage.from_('bukti_pendukung').download(doc.stored_filename)
-                
-                # Buat nama dan struktur folder dinamis di dalam ZIP
+                # Format folder: Nama_Seksi/KodeIKU_NamaFile
                 section_name = doc.assessment.section.replace(" ", "_")
                 arc_name = f"{section_name}/{doc.assessment.indicator.indicator_code}_{doc.original_filename}"
                 
-                # Masukkan file tersebut ke dalam arsip ZIP
-                zf.writestr(arc_name, file_data)
+                # --- JIKA FILE LAMA (SUPABASE) ---
+                if "." in doc.stored_filename:
+                    if supabase_client:
+                        file_data = supabase_client.storage.from_('bukti_pendukung').download(doc.stored_filename)
+                        zf.writestr(arc_name, file_data)
+                
+                # --- JIKA FILE BARU (GOOGLE DRIVE) ---
+                else:
+                    if drive_service:
+                        request_drive = drive_service.files().get_media(fileId=doc.stored_filename)
+                        file_stream = io.BytesIO()
+                        downloader = MediaIoBaseDownload(file_stream, request_drive)
+                        
+                        done = False
+                        while done is False:
+                            status, done = downloader.next_chunk()
+                        
+                        # Sisipkan hasil download GDrive ke dalam ZIP
+                        zf.writestr(arc_name, file_stream.getvalue())
+
             except Exception as e:
                 print(f"Gagal menyisipkan {doc.stored_filename} ke ZIP: {e}")
 
     memory_file.seek(0)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=f'Arsip_Bukti_{quarter}_{year}_{timestamp}.zip')
+    return send_file(
+        memory_file, 
+        mimetype='application/zip', 
+        as_attachment=True, 
+        download_name=f'Arsip_Bukti_{quarter}_{year}_{timestamp}.zip'
+    )
