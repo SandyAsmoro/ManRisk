@@ -22,7 +22,8 @@
           <tr>
             <th class="px-4 py-4 font-semibold text-gray-900">Kode</th>
             <th class="px-4 py-4 font-semibold text-gray-900">Deskripsi IRU</th>
-            <th class="px-4 py-4 font-semibold text-gray-900">Deskripsi Indikator</th>
+            <th class="px-4 py-4 font-semibold text-gray-900">Nama Indikator</th>
+            <th class="px-4 py-4 font-semibold text-gray-900">Risiko</th>
             <th class="px-4 py-4 font-semibold text-gray-900">PIC Utama</th>
             <th class="px-4 py-4 font-semibold text-center text-gray-900">P26</th>
             <th class="px-4 py-4 font-semibold text-center text-gray-900">R26</th>
@@ -42,7 +43,11 @@
               {{ item?.iru_description || '-' }}
             </td>
             
-            <td class="px-4 py-4 align-top whitespace-normal min-w-[250px] leading-relaxed">
+            <td class="px-4 py-4 align-top whitespace-normal min-w-[200px] leading-relaxed">
+              {{ item?.indicator_name || '-' }}
+            </td>
+            
+            <td class="px-4 py-4 align-top whitespace-normal min-w-[200px] leading-relaxed">
               {{ item?.indicator_description || '-' }}
             </td>
             

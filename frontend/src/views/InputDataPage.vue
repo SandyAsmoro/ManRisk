@@ -21,7 +21,7 @@
           <label class="block text-sm font-medium text-gray-700">Indikator Risiko</label>
           <select v-model="form.indicator_id" @change="handleIndicatorChange" class="w-full p-2 mt-1 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
             <option value="" disabled>-- Pilih Indikator --</option>
-            <option v-for="i in indicators" :key="i.id" :value="i.id">{{ i.code }} - {{ i.iru || i.name }}</option>
+            <option v-for="i in indicators" :key="i.id" :value="i.id">{{ i.code }} - {{ i.kejadian_risiko || i.name }}</option>
           </select>
           
           <div v-if="selectedIndicator && selectedIndicator.secondary_pics" class="flex items-center gap-2 mt-2">
