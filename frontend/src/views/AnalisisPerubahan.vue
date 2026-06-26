@@ -10,13 +10,12 @@
       </p>
     </div>
 
-    <div class="grid grid-cols-1 gap-6 p-6 bg-white border border-gray-100 shadow-sm rounded-xl md:grid-cols-3">
+    <div class="grid grid-cols-1 gap-6 p-6 bg-white border border-gray-100 shadow-sm rounded-xl md:grid-cols-4">
       <div>
         <label for="indicator-select" class="block mb-2 text-sm font-semibold text-gray-700">Pilih Indikator Risiko:</label>
         <select 
           id="indicator-select"
           v-model="selectedIndicatorId" 
-          @change="calculateMovement"
           class="w-full px-4 py-2 text-sm text-gray-700 transition bg-white border border-gray-300 rounded-lg shadow-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         >
           <option value="" disabled>-- Pilih Indikator Risiko --</option>
@@ -31,7 +30,6 @@
         <label id="period-a-label" class="block mb-2 text-sm font-semibold text-gray-700">Periode Asal (Kiri):</label>
         <select 
           v-model="periodA" 
-          @change="calculateMovement"
           aria-labelledby="period-a-label"
           class="w-full px-4 py-2 text-sm text-gray-700 transition bg-white border border-gray-300 rounded-lg shadow-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         >
@@ -47,7 +45,6 @@
         <label id="period-b-label" class="block mb-2 text-sm font-semibold text-gray-700">Periode Pembanding (Kanan):</label>
         <select 
           v-model="periodB" 
-          @change="calculateMovement"
           aria-labelledby="period-b-label"
           class="w-full px-4 py-2 text-sm text-gray-700 transition bg-white border border-gray-300 rounded-lg shadow-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         >
@@ -58,13 +55,28 @@
           <option value="R26">Target R26 (Batas Aman)</option>
         </select>
       </div>
+
+      <div>
+        <label for="year-select" class="block mb-2 text-sm font-semibold text-gray-700">Tahun Data:</label>
+        <input 
+          id="year-select"
+          type="number" 
+          v-model="selectedYear" 
+          class="w-full px-4 py-2 text-sm text-gray-700 transition bg-white border border-gray-300 rounded-lg shadow-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+        <p class="mt-1 text-[11px] text-gray-400">Triwulan Q1–Q4 dicocokkan pada tahun ini. Baseline P26/Target R26 tidak terikat tahun.</p>
+      </div>
     </div>
 
-    <div v-if="!selectedIndicatorId" class="p-12 font-medium text-center text-gray-400 border border-gray-300 border-dashed bg-gray-50 rounded-xl">
+    <div v-if="isLoading" class="p-12 font-medium text-center text-gray-400 border border-gray-300 border-dashed bg-gray-50 rounded-xl">
+      ⏳ Memuat data indikator, riwayat asesmen, dan matriks risiko...
+    </div>
+
+    <div v-else-if="!selectedIndicatorId" class="p-12 font-medium text-center text-gray-400 border border-gray-300 border-dashed bg-gray-50 rounded-xl">
       ⚠️ Silakan pilih indikator risiko terlebih dahulu untuk melihat visualisasi perbandingan tren.
     </div>
 
-    <div v-else class="grid items-start grid-cols-1 gap-8 lg:grid-cols-2">
+    <div v-else-if="selectedIndicatorId" class="grid items-start grid-cols-1 gap-8 lg:grid-cols-2">
       
       <div class="flex flex-col items-center p-6 bg-white border border-gray-100 shadow-sm rounded-xl">
         <div class="mb-4 text-center">
@@ -157,9 +169,6 @@
       </div>
     </div>
 
-    <div v-if="selectedIndicatorId" class="flex flex-col items-start justify-between gap-4 p-6 text-white bg-gray-900 shadow-md rounded-xl sm:flex-row sm:items-center">
-      </div>
-
     <TrenRisikoChart 
       v-if="selectedIndicatorId" 
       :indicator-id="selectedIndicatorId" 
@@ -169,7 +178,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import api from '@/utils/api';
 import TrenRisikoChart from '@/components/TrenRisikoChart.vue';
 
@@ -180,9 +189,12 @@ const indicators = ref([]);
 const allAssessments = ref([]);
 const matrixData = ref([]); // 🚨 Satu-satunya sumber kebenaran utk layout matriks, dari /matriks/mapping
 
+const isLoading = ref(true); // 🚨 PERBAIKAN: status loading saat fetch awal, agar tidak terlihat "kosong/rusak"
+
 const selectedIndicatorId = ref('');
 const periodA = ref('Q1');
 const periodB = ref('Q2');
+const selectedYear = ref(new Date().getFullYear()); // 🚨 PERBAIKAN: filter tahun, sebelumnya tidak ada sama sekali
 
 // State Posisi Koordinat Sel
 const posA = ref({ f: 0, imp: 0, score: 0, category: '', color: '', color_code: '#9CA3AF', valid: false });
@@ -255,7 +267,7 @@ const getMovementArrowIcon = () => {
 // (kolom p26_initial/r26_target di database), lalu cari koordinat & kategori
 // resminya di tabel matriks berdasarkan skor tersebut.
 const getFallbackPeriodData = (period, indicatorId) => {
-  const indicator = indicators.value.find(i => i?.id === indicatorId);
+  const indicator = indicators.value.find(i => Number(i?.id) === Number(indicatorId));
   const score = indicator ? (period === 'P26' ? indicator.p26 : period === 'R26' ? indicator.r26 : null) : null;
 
   if (score === null || score === undefined) {
@@ -277,8 +289,18 @@ const getFallbackPeriodData = (period, indicatorId) => {
 const calculateMovement = () => {
   if (!selectedIndicatorId.value) return;
 
+  // 🚨 PERBAIKAN: gunakan Number() saat membandingkan ID (konsisten dgn TrenRisikoChart.vue)
+  // agar tidak gagal cocok hanya karena perbedaan tipe data (string vs number) dari berbagai sumber.
+  // Periode P26/R26 tidak terikat tahun (baseline/target tetap), sedangkan Q1-Q4 dicocokkan
+  // dengan tahun yang sedang dipilih (selectedYear) supaya tidak salah ambil data dari tahun lain.
+  const findAssessment = (period) => allAssessments.value.find(a =>
+    Number(a.indicator_id) === Number(selectedIndicatorId.value) &&
+    a.quarter === period &&
+    (['P26', 'R26'].includes(period) || Number(a.year) === Number(selectedYear.value))
+  );
+
   // 1. Ekstrak Posisi A
-  const dataA = allAssessments.value.find(a => a.indicator_id === selectedIndicatorId.value && a.quarter === periodA.value);
+  const dataA = findAssessment(periodA.value);
   if (dataA) {
     const cellInfo = getCellInfoByScore(dataA.risk_value);
     posA.value = {
@@ -297,7 +319,7 @@ const calculateMovement = () => {
   }
 
   // 2. Ekstrak Posisi B
-  const dataB = allAssessments.value.find(a => a.indicator_id === selectedIndicatorId.value && a.quarter === periodB.value);
+  const dataB = findAssessment(periodB.value);
   if (dataB) {
     const cellInfo = getCellInfoByScore(dataB.risk_value);
     posB.value = {
@@ -341,6 +363,7 @@ const calculateMovement = () => {
 };
 
 const loadInitialData = async () => {
+  isLoading.value = true;
   try {
     const indRes = await api.get('/risiko/indicators');
 
@@ -349,7 +372,8 @@ const loadInitialData = async () => {
       indicators.value = indRes.data.data.filter(item => item !== null && item !== undefined);
     }
 
-    const assRes = await api.get('/risiko/assessments');
+    // const assRes = await api.get('/risiko/assessments');
+    const assRes = await api.get('/risiko/assessments', { params: { scope: 'all' } });
     if (assRes.data?.data && Array.isArray(assRes.data.data)) {
       allAssessments.value = assRes.data.data.filter(item => item !== null && item !== undefined);
     }
@@ -361,8 +385,22 @@ const loadInitialData = async () => {
     }
   } catch (error) {
     console.error("Gagal menarik data komparasi analitis:", error);
+  } finally {
+    isLoading.value = false;
   }
 };
+
+// 🚨 PERBAIKAN UTAMA: sebelumnya calculateMovement() HANYA dipanggil lewat @change
+// pada dropdown. Jika data dari API (allAssessments/matrixData) belum selesai dimuat
+// saat user memilih indikator/periode, hasil kalkulasi memakai array kosong dan TIDAK
+// PERNAH dihitung ulang setelah data datang -> matriks permanen menampilkan "Belum
+// Diinput" meskipun datanya sebenarnya ada. Sekarang dipantau lewat watch() sehingga
+// otomatis terhitung ulang setiap kali salah satu sumber ini berubah, termasuk saat
+// fetch awal baru selesai di background.
+watch(
+  [selectedIndicatorId, periodA, periodB, selectedYear, allAssessments, matrixData],
+  () => calculateMovement()
+);
 
 onMounted(() => {
   loadInitialData();

@@ -109,10 +109,16 @@ def get_assessments():
 
     quarter = request.args.get('quarter')
     year = request.args.get('year')
+    scope = request.args.get('scope', 'own')  # 🚨 BARU: 'own' (default) atau 'all'
 
     query = RiskAssessment.query
 
-    if user.role != 'admin':
+    # 🚨 PERBAIKAN: filter section HANYA berlaku kalau scope='own' (perilaku lama,
+    # tetap dipakai utk Edit/Hapus & cek duplikasi input -> section harus dijaga).
+    # Kalau scope='all' (dipakai khusus halaman Analisis Tren), SEMUA role -
+    # termasuk non-admin - bisa lihat data lintas section secara READ-ONLY,
+    # karena analisis tren tidak punya tombol edit/hapus sama sekali.
+    if user.role != 'admin' and scope != 'all':
         query = query.filter_by(section=user.section)
 
     if quarter:
