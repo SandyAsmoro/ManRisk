@@ -9,6 +9,7 @@
       <router-link to="/" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
         Dashboard
       </router-link>
+      
       <router-link to="/input" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
         Input Data Risiko
       </router-link>
@@ -17,22 +18,18 @@
         Riwayat & Edit Data
       </router-link>
       
-      <router-link to="/laporan" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
-        Laporan & Rekap
-      </router-link>
-      
       <router-link to="/analisis-perubahan" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
         Analisis Perubahan
       </router-link>
       
-      <hr class="my-4 border-secondary" />
-
-      <router-link v-if="authStore.user?.role === 'admin'" to="/ubah-password" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
-        Ubah Password Admin
+      <router-link to="/laporan" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
+        Laporan & Rekap
       </router-link>
       
+      <hr class="my-4 border-secondary" />
+      
       <router-link v-if="authStore.user?.role === 'admin'" to="/admin/indicators" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
-        Kelola Indikator & Target
+        Kelola Indikator Risiko
       </router-link>
 
       <router-link v-if="authStore.user?.role === 'admin'" to="/admin/verifikasi" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
@@ -41,6 +38,10 @@
 
       <router-link v-if="authStore.user?.role === 'admin'" to="/admin" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
         Kelola User
+      </router-link>
+
+      <router-link v-if="authStore.user?.role === 'admin'" to="/ubah-password" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">
+        Ubah Password Admin
       </router-link>
 
       <router-link v-if="authStore.user?.role === 'admin'" to="/audit-log" class="block p-3 transition rounded hover:bg-secondary" active-class="bg-secondary">

@@ -53,7 +53,7 @@
       <div class="overflow-hidden bg-white border border-gray-100 shadow-sm rounded-xl">
         <div class="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50">
           <div>
-            <h3 class="text-lg font-bold text-gray-800">Daftar & Deskripsi Indikator Risiko Resmi Kemenkeu</h3>
+            <h3 class="text-lg font-bold text-gray-800">Daftar & Risiko Resmi Kemenkeu</h3>
             <p class="text-xs text-gray-500 mt-0.5">Menampilkan rincian kode, deskripsi indikator secara lengkap, serta
               penugasan seksi PIC.</p>
           </div>

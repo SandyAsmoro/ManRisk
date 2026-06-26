@@ -54,11 +54,11 @@
 
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700">Frekuensi (1-5)</label>
+            <label class="block text-sm font-medium text-gray-700">Level Kemungkinan (1-5)</label>
             <input type="number" v-model="form.frequency" min="1" max="5" :disabled="isReadOnly" class="w-full p-2 mt-1 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100" required />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700">Dampak (1-5)</label>
+            <label class="block text-sm font-medium text-gray-700">Level Dampak (1-5)</label>
             <input type="number" v-model="form.impact" min="1" max="5" :disabled="isReadOnly" class="w-full p-2 mt-1 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100" required />
           </div>
         </div>

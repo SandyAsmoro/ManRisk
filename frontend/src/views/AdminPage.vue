@@ -1,5 +1,3 @@
-<!-- ...\ManRiskMSKI\frontend\src\views\AdminPage.vue -->
-
 <template>
   <div class="p-6 mx-auto max-w-7xl">
 
@@ -27,8 +25,13 @@
           <tbody class="divide-y divide-gray-100">
             <tr v-for="u in filteredUsers" :key="u.id" class="transition hover:bg-gray-50">
               <td class="p-4">
-                <p class="font-bold text-gray-800">{{ u.full_name || '-' }}</p>
-                <p class="text-xs text-gray-500">@{{ u.username }}</p>
+                <p class="font-bold text-gray-800" :class="{ 'text-gray-400 line-through': !u.is_active }">
+                  {{ u.full_name || '-' }}
+                </p>
+                <p class="text-xs text-gray-500">
+                  @{{ u.username }}
+                  <span v-if="!u.is_active" class="ml-2 font-semibold text-red-500">(Dinonaktifkan)</span>
+                </p>
               </td>
               <td class="p-4 text-center">
                 <span class="px-2 py-1 text-xs font-semibold text-blue-700 rounded bg-blue-50">{{ u.section || '-' }}</span>
@@ -36,9 +39,12 @@
               <td class="p-4 text-center">
                 <span :class="u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'" class="px-2 py-1 text-xs font-bold uppercase rounded">{{ u.role }}</span>
               </td>
-              <td class="p-4 text-center">
+              <td class="flex justify-center gap-2 p-4 text-center">
                 <button @click="confirmReset(u)" class="px-3 py-1 text-xs font-bold text-orange-600 border border-orange-200 rounded bg-orange-50 hover:bg-orange-100">
                   Reset Password
+                </button>
+                <button v-if="u.is_active" @click="confirmDeactivate(u)" class="px-3 py-1 text-xs font-bold text-red-600 border border-red-200 rounded bg-red-50 hover:bg-red-100">
+                  Hapus
                 </button>
               </td>
             </tr>
@@ -76,8 +82,7 @@ const selectedUser = ref(null);
 const temporaryPassword = ref('');
 
 const filteredUsers = computed(() => {
-  // Hanya mengembalikan user yang rolenya BUKAN admin
-  return users.value.filter(user => user.role !== 'admin');
+  return users.value.filter(user => user.role !== 'admin' && user.is_active);
 });
 
 const fetchUsers = async () => {
@@ -101,6 +106,20 @@ const confirmReset = async (user) => {
     }
   }
 };
+
+// --- TAMBAHAN: Fungsi untuk menghapus (menonaktifkan) user ---
+const confirmDeactivate = async (user) => {
+  if (confirm(`Peringatan: Apakah Anda yakin ingin menonaktifkan akun @${user.username}?\n\nPengguna ini tidak akan bisa login ke sistem lagi.`)) {
+    try {
+      const res = await api.delete(`/auth/users/${user.id}`);
+      alert(res.data.message || "User berhasil dinonaktifkan.");
+      fetchUsers(); // Refresh data tabel setelah sukses
+    } catch (e) {
+      alert(e.response?.data?.message || "Terjadi kesalahan. Gagal menonaktifkan user.");
+    }
+  }
+};
+// -----------------------------------------------------------
 
 const closeModal = () => {
   showModal.value = false;
